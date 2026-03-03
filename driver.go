@@ -11,7 +11,6 @@ import (
 	"time"
 
 	. "github.com/infrago/base"
-	"github.com/infrago/infra"
 	"github.com/infrago/token"
 	"github.com/redis/go-redis/v9"
 )
@@ -119,7 +118,7 @@ func (d *redisDriver) Close() error {
 	return err
 }
 
-func (d *redisDriver) SavePayload(_ *infra.Meta, tokenID string, payload Map, exp int64) error {
+func (d *redisDriver) SavePayload(tokenID string, payload Map, exp int64) error {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
 		return nil
@@ -140,7 +139,7 @@ func (d *redisDriver) SavePayload(_ *infra.Meta, tokenID string, payload Map, ex
 	return client.Set(ctx, key, bts, 0).Err()
 }
 
-func (d *redisDriver) LoadPayload(_ *infra.Meta, tokenID string) (Map, bool, error) {
+func (d *redisDriver) LoadPayload(tokenID string) (Map, bool, error) {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
 		return nil, false, nil
@@ -164,7 +163,7 @@ func (d *redisDriver) LoadPayload(_ *infra.Meta, tokenID string) (Map, bool, err
 	return out, true, nil
 }
 
-func (d *redisDriver) DeletePayload(_ *infra.Meta, tokenID string) error {
+func (d *redisDriver) DeletePayload(tokenID string) error {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
 		return nil
@@ -176,7 +175,7 @@ func (d *redisDriver) DeletePayload(_ *infra.Meta, tokenID string) error {
 	return client.Del(context.Background(), d.keyPayload(tokenID)).Err()
 }
 
-func (d *redisDriver) RevokeToken(_ *infra.Meta, token string, exp int64) error {
+func (d *redisDriver) RevokeToken(token string, exp int64) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil
@@ -193,7 +192,7 @@ func (d *redisDriver) RevokeToken(_ *infra.Meta, token string, exp int64) error 
 	return client.Set(ctx, key, "1", 0).Err()
 }
 
-func (d *redisDriver) RevokeTokenID(_ *infra.Meta, tokenID string, exp int64) error {
+func (d *redisDriver) RevokeTokenID(tokenID string, exp int64) error {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
 		return nil
@@ -210,7 +209,7 @@ func (d *redisDriver) RevokeTokenID(_ *infra.Meta, tokenID string, exp int64) er
 	return client.Set(ctx, key, "1", 0).Err()
 }
 
-func (d *redisDriver) RevokedToken(_ *infra.Meta, token string) (bool, error) {
+func (d *redisDriver) RevokedToken(token string) (bool, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return false, nil
@@ -223,7 +222,7 @@ func (d *redisDriver) RevokedToken(_ *infra.Meta, token string) (bool, error) {
 	return n > 0, err
 }
 
-func (d *redisDriver) RevokedTokenID(_ *infra.Meta, tokenID string) (bool, error) {
+func (d *redisDriver) RevokedTokenID(tokenID string) (bool, error) {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
 		return false, nil
@@ -278,4 +277,3 @@ func hashToken(token string) string {
 	sum := sha1.Sum([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
-
