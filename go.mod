@@ -3,9 +3,9 @@ module github.com/infrago/token-redis
 go 1.25.3
 
 require (
-	github.com/infrago/base v0.10.0
-	github.com/infrago/infra v0.10.0
-	github.com/infrago/token v0.10.0
+	github.com/infrago/base v0.11.0
+	github.com/infrago/infra v0.11.0
+	github.com/infrago/token v0.11.0
 	github.com/redis/go-redis/v9 v9.17.3
 )
 
@@ -15,5 +15,3 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/infrago/token => ../token
