@@ -3,9 +3,9 @@ module github.com/infrago/token-redis
 go 1.25.3
 
 require (
-	github.com/infrago/base v0.11.0
-	github.com/infrago/infra v0.11.0
-	github.com/infrago/token v0.11.0
+	github.com/infrago/base v0.11.1
+	github.com/infrago/infra v0.11.1
+	github.com/infrago/token v0.11.1
 	github.com/redis/go-redis/v9 v9.17.3
 )
 
