@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,6 +11,8 @@ import (
 
 	. "github.com/infrago/base"
 	"github.com/infrago/token"
+	"github.com/infrago/token/expire"
+	"github.com/infrago/token/payloadcodec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,15 +24,19 @@ type redisDriver struct {
 	password string
 	db       int
 	prefix   string
+	timeout  time.Duration
+	codec    string
 
 	client *redis.Client
 }
 
 func init() {
 	token.RegisterDriver("redis", &redisDriver{
-		addr:   "127.0.0.1:6379",
-		db:     0,
-		prefix: "infrago:token:",
+		addr:    "127.0.0.1:6379",
+		db:      0,
+		prefix:  "infrago:token:",
+		timeout: 5 * time.Second,
+		codec:   payloadcodec.Default,
 	})
 }
 
@@ -85,6 +90,15 @@ func (d *redisDriver) Configure(setting Map) {
 	if v, ok := setting["prefix"].(string); ok && strings.TrimSpace(v) != "" {
 		d.prefix = strings.TrimSpace(v)
 	}
+	if timeout, ok := parseDurationSetting(setting["redis_timeout"]); ok {
+		d.timeout = timeout
+	}
+	if timeout, ok := parseDurationSetting(setting["timeout"]); ok {
+		d.timeout = timeout
+	}
+	if codec := payloadcodec.FromSetting(setting); codec != "" {
+		d.codec = codec
+	}
 }
 
 func (d *redisDriver) Open() error {
@@ -99,7 +113,9 @@ func (d *redisDriver) Open() error {
 		Password: d.password,
 		DB:       d.db,
 	})
-	if err := client.Ping(context.Background()).Err(); err != nil {
+	ctx, cancel := contextWithTimeout(d.timeout)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return err
 	}
@@ -123,15 +139,19 @@ func (d *redisDriver) SavePayload(tokenID string, payload Map, exp int64) error 
 	if tokenID == "" {
 		return nil
 	}
+	if expire.ExpiredUnix(exp) {
+		return nil
+	}
 	client, err := d.ensureClient()
 	if err != nil {
 		return err
 	}
-	bts, err := json.Marshal(payload)
+	bts, err := payloadcodec.Marshal(d.payloadCodec(), payload)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx, cancel := d.context()
+	defer cancel()
 	key := d.keyPayload(tokenID)
 	if ttl := d.expireDuration(exp); ttl > 0 {
 		return client.Set(ctx, key, bts, ttl).Err()
@@ -148,7 +168,8 @@ func (d *redisDriver) LoadPayload(tokenID string) (Map, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	ctx := context.Background()
+	ctx, cancel := d.context()
+	defer cancel()
 	raw, err := client.Get(ctx, d.keyPayload(tokenID)).Result()
 	if err == redis.Nil {
 		return nil, false, nil
@@ -157,7 +178,7 @@ func (d *redisDriver) LoadPayload(tokenID string) (Map, bool, error) {
 		return nil, false, err
 	}
 	out := Map{}
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+	if err := payloadcodec.Unmarshal(d.payloadCodec(), []byte(raw), &out); err != nil {
 		return nil, false, err
 	}
 	return out, true, nil
@@ -172,7 +193,9 @@ func (d *redisDriver) DeletePayload(tokenID string) error {
 	if err != nil {
 		return err
 	}
-	return client.Del(context.Background(), d.keyPayload(tokenID)).Err()
+	ctx, cancel := d.context()
+	defer cancel()
+	return client.Del(ctx, d.keyPayload(tokenID)).Err()
 }
 
 func (d *redisDriver) RevokeToken(token string, exp int64) error {
@@ -180,11 +203,15 @@ func (d *redisDriver) RevokeToken(token string, exp int64) error {
 	if token == "" {
 		return nil
 	}
+	if expire.ExpiredUnix(exp) {
+		return nil
+	}
 	client, err := d.ensureClient()
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx, cancel := d.context()
+	defer cancel()
 	key := d.keyRevokeToken(token)
 	if ttl := d.expireDuration(exp); ttl > 0 {
 		return client.Set(ctx, key, "1", ttl).Err()
@@ -197,11 +224,15 @@ func (d *redisDriver) RevokeTokenID(tokenID string, exp int64) error {
 	if tokenID == "" {
 		return nil
 	}
+	if expire.ExpiredUnix(exp) {
+		return nil
+	}
 	client, err := d.ensureClient()
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx, cancel := d.context()
+	defer cancel()
 	key := d.keyRevokeTokenID(tokenID)
 	if ttl := d.expireDuration(exp); ttl > 0 {
 		return client.Set(ctx, key, "1", ttl).Err()
@@ -218,7 +249,9 @@ func (d *redisDriver) RevokedToken(token string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	n, err := client.Exists(context.Background(), d.keyRevokeToken(token)).Result()
+	ctx, cancel := d.context()
+	defer cancel()
+	n, err := client.Exists(ctx, d.keyRevokeToken(token)).Result()
 	return n > 0, err
 }
 
@@ -231,7 +264,9 @@ func (d *redisDriver) RevokedTokenID(tokenID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	n, err := client.Exists(context.Background(), d.keyRevokeTokenID(tokenID)).Result()
+	ctx, cancel := d.context()
+	defer cancel()
+	n, err := client.Exists(ctx, d.keyRevokeTokenID(tokenID)).Result()
 	return n > 0, err
 }
 
@@ -263,14 +298,74 @@ func (d *redisDriver) keyRevokeTokenID(tokenID string) string {
 }
 
 func (d *redisDriver) expireDuration(exp int64) time.Duration {
-	if exp <= 0 {
-		return 0
+	return expire.DurationUntilUnix(exp)
+}
+
+func (d *redisDriver) payloadCodec() string {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	return payloadcodec.Normalize(d.codec)
+}
+
+func (d *redisDriver) context() (context.Context, context.CancelFunc) {
+	d.mutex.Lock()
+	timeout := d.timeout
+	d.mutex.Unlock()
+	return contextWithTimeout(timeout)
+}
+
+func contextWithTimeout(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.Background(), func() {}
 	}
-	delta := time.Until(time.Unix(exp, 0))
-	if delta <= 0 {
-		return time.Second
+	return context.WithTimeout(context.Background(), timeout)
+}
+
+func parseDurationSetting(v Any) (time.Duration, bool) {
+	switch vv := v.(type) {
+	case time.Duration:
+		return vv, true
+	case string:
+		vv = strings.TrimSpace(vv)
+		if vv == "" {
+			return 0, false
+		}
+		duration, err := time.ParseDuration(vv)
+		if err == nil {
+			return duration, true
+		}
+		seconds, err := strconv.ParseFloat(vv, 64)
+		if err != nil {
+			return 0, false
+		}
+		return time.Duration(seconds * float64(time.Second)), true
+	case int:
+		return time.Duration(vv) * time.Second, true
+	case int8:
+		return time.Duration(vv) * time.Second, true
+	case int16:
+		return time.Duration(vv) * time.Second, true
+	case int32:
+		return time.Duration(vv) * time.Second, true
+	case int64:
+		return time.Duration(vv) * time.Second, true
+	case uint:
+		return time.Duration(vv) * time.Second, true
+	case uint8:
+		return time.Duration(vv) * time.Second, true
+	case uint16:
+		return time.Duration(vv) * time.Second, true
+	case uint32:
+		return time.Duration(vv) * time.Second, true
+	case uint64:
+		return time.Duration(vv) * time.Second, true
+	case float32:
+		return time.Duration(float64(vv) * float64(time.Second)), true
+	case float64:
+		return time.Duration(vv * float64(time.Second)), true
+	default:
+		return 0, false
 	}
-	return delta
 }
 
 func hashToken(token string) string {

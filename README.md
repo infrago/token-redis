@@ -24,9 +24,12 @@ redis_username = ""
 redis_password = ""
 redis_db = 0
 redis_prefix = "infrago:token:"
+redis_timeout = "5s"
+store_codec = "json"
 ```
 
-兼容简写键：`addr/username/password/db/prefix`。
+兼容简写键：`addr/username/password/db/prefix/timeout`。`redis_timeout` 和 `timeout` 支持 Go duration 字符串（如 `"250ms"`、`"5s"`）或数字秒数；小于等于 0 表示不设置 deadline。
+payload 存储 codec 支持 `store_codec/payload_codec/driver_codec`，默认 `json`。
 
 ## 使用
 
